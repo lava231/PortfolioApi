@@ -1,0 +1,77 @@
+### Visual Studio ###
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+### Build artifacts ###
+/bin/
+/obj/
+**/bin/
+**/obj/
+*.log
+*.tlog
+*.tmp
+*.temp
+
+### Visual Studio Code ###
+.vscode/
+
+### Rider ###
+.idea/
+*.sln.iml
+
+### NuGet ###
+*.nupkg
+*.snupkg
+packages/
+
+### Publish output ###
+/publish/
+*.Publish.xml
+
+### Dotnet user secrets (do not commit secrets file) ###
+secrets.json
+
+### Environment files (may contain secrets) ###
+.env
+.env.*
+
+### Certificates and keys ###
+*.pfx
+*.p12
+*.key
+*.pem
+
+### Logs, coverage, test results ###
+TestResults/
+coverage/
+coverage.*
+nunit-*.xml
+*.trx
+
+### EF Core migrations / database files ###
+*.db
+*.mdf
+*.ldf
+
+### Local settings and generated files ###
+.DS_Store
+Thumbs.db
+desktop.ini
+
+### Microsoft ASP.NET Scaffolding ###
+ScaffoldingReadMe.txt
+
+### Local appsettings (development) ###
+# Keep appsettings.json tracked; ignore local development overrides
+appsettings.Development.json
+
+### Backups and generated exports ###
+/backups/
+*.backup.json
+
+# Do NOT ignore source code, migrations, project files, solution files, documentation, or other files required to build and run the application.
+
+# NOTE: If sensitive files are already tracked in the repository (for example, appsettings.Development.json or a secrets file), adding them to .gitignore will not remove them from the Git history or stop them from being tracked. To stop tracking a currently tracked file, you must remove it from the index (for example: `git rm --cached <file>`) and commit the change. Be careful — consult your team before removing tracked files.
