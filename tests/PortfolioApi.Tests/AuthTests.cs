@@ -1,24 +1,43 @@
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
+using PortfolioApi.Models.Entities;
+using PortfolioApi.Repositories;
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.DependencyInjection;
-using Moq;
-using PortfolioApi.Repositories;
-using PortfolioApi.Models.Entities;
 using Xunit;
 
 namespace PortfolioApi.Tests
 {
-    public class AuthTests : IClassFixture<WebApplicationFactory<Program>>
+    public class AuthTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
     {
         private readonly WebApplicationFactory<Program> _factory;
 
         public AuthTests(WebApplicationFactory<Program> factory)
         {
             _factory = factory;
+        }
+
+        private readonly string? _originalJwtKey =
+    Environment.GetEnvironmentVariable("Jwt:Key");
+
+        private readonly string? _originalJwtIssuer =
+            Environment.GetEnvironmentVariable("Jwt:Issuer");
+
+        private readonly string? _originalJwtAudience =
+            Environment.GetEnvironmentVariable("Jwt:Audience");
+
+        public void Dispose()
+        {
+            Environment.SetEnvironmentVariable("Jwt:Key", _originalJwtKey);
+            Environment.SetEnvironmentVariable("Jwt:Issuer", _originalJwtIssuer);
+            Environment.SetEnvironmentVariable("Jwt:Audience", _originalJwtAudience);
         }
 
         [Fact]
@@ -35,7 +54,11 @@ namespace PortfolioApi.Tests
                 });
             }).CreateClient();
 
-            var payload = JsonSerializer.Serialize(new { email = "noone@example.com", password = "bad" });
+            var payload = JsonSerializer.Serialize(new
+            {
+                email = "noone@example.com",
+                password = "invalid-password"
+            });
             var res = await client.PostAsync("/api/auth/login", new System.Net.Http.StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
 
             Assert.Equal(HttpStatusCode.Unauthorized, res.StatusCode);
@@ -287,29 +310,55 @@ namespace PortfolioApi.Tests
                 Environment.SetEnvironmentVariable("Jwt:Audience", audience);
             }).CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-            var payload = JsonSerializer.Serialize(new { email = "noone@example.com", password = "bad" });
-            var res1 = await client.PostAsync("/api/auth/login", new System.Net.Http.StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
-            // First attempt should be processed (401 expected because credentials invalid)
-            Assert.Equal(HttpStatusCode.Unauthorized, res1.StatusCode);
+            var payload = JsonSerializer.Serialize(new
+            {
+                email = "noone@example.com",
+                password = "invalid-password"
+            });
+            for (var i = 0; i < 10; i++)
+            {
+                using var content = new System.Net.Http.StringContent(
+                    payload,
+                    System.Text.Encoding.UTF8,
+                    "application/json");
 
-            var res2 = await client.PostAsync("/api/auth/login", new System.Net.Http.StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
-            // Second attempt should be rate-limited (429)
-            Assert.Equal((HttpStatusCode)429, res2.StatusCode);
+                var response = await client.PostAsync("/api/auth/login", content);
+                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            }
+
+            using var limitedContent = new System.Net.Http.StringContent(
+                payload,
+                System.Text.Encoding.UTF8,
+                "application/json");
+
+            var limitedResponse = await client.PostAsync("/api/auth/login", limitedContent);
+            Assert.Equal((HttpStatusCode)429, limitedResponse.StatusCode);
         }
 
         [Fact]
         public void Missing_Jwt_Configuration_Throws_On_Startup()
         {
-            // Attempt to start host without required Jwt config and assert startup failure
-            // Ensure no Jwt keys are present by clearing relevant environment variables for this test
-            Environment.SetEnvironmentVariable("Jwt:Key", null);
-            Environment.SetEnvironmentVariable("Jwt:Issuer", null);
-            Environment.SetEnvironmentVariable("Jwt:Audience", null);
+            var factory = _factory.WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Production");
 
-            var factory = _factory.WithWebHostBuilder(builder => { /* no additional config */ });
+                builder.ConfigureAppConfiguration((_, configuration) =>
+                {
+                    configuration.Sources.Clear();
 
-            // Creating a client should fail because the app throws during startup configuration
-            Assert.ThrowsAny<System.Exception>(() => factory.CreateClient());
+                    configuration.AddInMemoryCollection(
+                        new Dictionary<string, string?>
+                        {
+                            ["Jwt:Key"] = "",
+                            ["JWT_SECRET"] = "",
+                            ["Jwt:Issuer"] = "",
+                            ["Jwt:Audience"] = ""
+                        });
+                });
+            });
+
+            Assert.ThrowsAny<InvalidOperationException>(
+                () => factory.CreateClient());
         }
     }
 }

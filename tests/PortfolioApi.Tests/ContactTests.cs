@@ -1,18 +1,14 @@
-using System;
-using System.Net;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text.Json;
-using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Configuration;
-using System.Threading.RateLimiting;
-using Microsoft.AspNetCore.RateLimiting;
 using Moq;
 using PortfolioApi.Models.Entities;
 using PortfolioApi.Repositories;
+using System;
+using System.Net;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace PortfolioApi.Tests
@@ -20,9 +16,11 @@ namespace PortfolioApi.Tests
     // Minimal authentication handler for tests
     public class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>
     {
-        public TestAuthHandler(Microsoft.Extensions.Options.IOptionsMonitor<AuthenticationSchemeOptions> options,
-            Microsoft.Extensions.Logging.ILoggerFactory logger, System.Text.Encodings.Web.UrlEncoder encoder, Microsoft.AspNetCore.Authentication.ISystemClock clock)
-            : base(options, logger, encoder, clock) { }
+        public TestAuthHandler(
+    Microsoft.Extensions.Options.IOptionsMonitor<AuthenticationSchemeOptions> options,
+    Microsoft.Extensions.Logging.ILoggerFactory logger,
+    System.Text.Encodings.Web.UrlEncoder encoder)
+    : base(options, logger, encoder){}
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
@@ -34,13 +32,29 @@ namespace PortfolioApi.Tests
         }
     }
 
-    public class ContactTests : IClassFixture<WebApplicationFactory<Program>>
+    public class ContactTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
     {
         private readonly WebApplicationFactory<Program> _factory;
 
         public ContactTests(WebApplicationFactory<Program> factory)
         {
             _factory = factory;
+        }
+
+        private readonly string? _originalJwtKey =
+    Environment.GetEnvironmentVariable("Jwt:Key");
+
+        private readonly string? _originalJwtIssuer =
+            Environment.GetEnvironmentVariable("Jwt:Issuer");
+
+        private readonly string? _originalJwtAudience =
+            Environment.GetEnvironmentVariable("Jwt:Audience");
+
+        public void Dispose()
+        {
+            Environment.SetEnvironmentVariable("Jwt:Key", _originalJwtKey);
+            Environment.SetEnvironmentVariable("Jwt:Issuer", _originalJwtIssuer);
+            Environment.SetEnvironmentVariable("Jwt:Audience", _originalJwtAudience);
         }
 
         [Fact]
@@ -160,29 +174,57 @@ namespace PortfolioApi.Tests
         public async Task Contact_Create_Is_Rate_Limited()
         {
             var mockRepo = new Mock<IContactRepository>();
-            mockRepo.Setup(r => r.AddAsync(It.IsAny<Contact>())).ReturnsAsync((Contact c) => { c.Id = System.Guid.NewGuid(); c.CreatedAt = System.DateTime.UtcNow; return c; });
 
-            // Provide rate limit configuration via environment to avoid test host extension mismatch
-            Environment.SetEnvironmentVariable("Test_RateLimit_ContactPolicy_PermitLimit", "1");
+            mockRepo
+                .Setup(r => r.AddAsync(It.IsAny<Contact>()))
+                .ReturnsAsync((Contact c) =>
+                {
+                    c.Id = Guid.NewGuid();
+                    c.CreatedAt = DateTime.UtcNow;
+                    return c;
+                });
 
             Environment.SetEnvironmentVariable("Jwt:Key", new string('a', 40));
             Environment.SetEnvironmentVariable("Jwt:Issuer", "test");
             Environment.SetEnvironmentVariable("Jwt:Audience", "test");
 
-            var client = _factory.WithWebHostBuilder(builder =>
+            using var client = _factory.WithWebHostBuilder(builder =>
             {
                 builder.ConfigureServices(services =>
                 {
                     services.AddSingleton<IContactRepository>(mockRepo.Object);
                 });
-            }).CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            }).CreateClient(new WebApplicationFactoryClientOptions
+            {
+                AllowAutoRedirect = false
+            });
 
-            var payload = JsonSerializer.Serialize(new { name = "A", email = "a@b.com", message = "0123456789" });
-            var res1 = await client.PostAsync("/api/contact", new StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
-            Assert.True(res1.StatusCode == HttpStatusCode.Created || res1.StatusCode == HttpStatusCode.Unauthorized || res1.StatusCode == HttpStatusCode.BadRequest);
+            var payload = JsonSerializer.Serialize(new
+            {
+                name = "Alex",
+                email = "alex@example.com",
+                message = "This is a valid contact message."
+            });
 
-            var res2 = await client.PostAsync("/api/contact", new StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
-            Assert.Equal((HttpStatusCode)429, res2.StatusCode);
+            for (var i = 0; i < 5; i++)
+            {
+                using var content = new StringContent(
+                    payload,
+                    System.Text.Encoding.UTF8,
+                    "application/json");
+
+                var response = await client.PostAsync("/api/contact", content);
+                Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            }
+
+            using var limitedContent = new StringContent(
+                payload,
+                System.Text.Encoding.UTF8,
+                "application/json");
+
+            var limitedResponse = await client.PostAsync("/api/contact", limitedContent);
+
+            Assert.Equal((HttpStatusCode)429, limitedResponse.StatusCode);
         }
 
         [Fact]

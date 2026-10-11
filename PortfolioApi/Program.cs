@@ -1,15 +1,9 @@
+using Azure.Identity;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Microsoft.EntityFrameworkCore;
-using System.Diagnostics;
-using System.Linq;
-using System.Threading.RateLimiting;
 using System.Security.Cryptography;
-using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.AspNetCore.Hosting.Server;
-using Microsoft.AspNetCore.Hosting.Server.Features;
-using Azure.Identity;
-using Azure.Extensions.AspNetCore.Configuration.Secrets;
+using System.Threading.RateLimiting;
 // Configure Swagger/OpenAPI using Swashbuckle
 
 var builder = WebApplication.CreateBuilder(args);
@@ -115,15 +109,17 @@ if (string.IsNullOrWhiteSpace(jwtKey))
 {
     if (builder.Environment.IsDevelopment())
     {
-        // Generate a 64-byte random key and use its base64 representation as the signing secret.
+        // Generate a temporary key for local development only.
         var devKeyBytes = RandomNumberGenerator.GetBytes(64);
         jwtKey = Convert.ToBase64String(devKeyBytes);
-        // Inform developer via console; this avoids adding logging dependencies at this point.
-        Console.WriteLine("WARNING: No JWT signing key configured. A temporary development key was generated. Do NOT use this in production.");
+
+        Console.WriteLine(
+            "WARNING: No JWT signing key configured. A temporary development key was generated. Do NOT use this in production.");
     }
     else
     {
-        throw new InvalidOperationException("JWT signing key is not configured. Set configuration value 'Jwt:Key' (do not store secrets in source control).");
+        throw new InvalidOperationException(
+            "JWT signing key is not configured. Set configuration value 'Jwt:Key' (do not store secrets in source control).");
     }
 }
 
@@ -210,7 +206,8 @@ builder.Services.AddValidatorsFromAssemblyContaining<PortfolioApi.Validators.Pro
 
 var app = builder.Build();
 
-// Enable rate limiter middleware so attribute-based policies are enforced
+// Routing must select the endpoint before endpoint-specific rate-limit policies are evaluated.
+app.UseRouting();
 app.UseRateLimiter();
 
 // Attach global exception handlers to capture unobserved errors during startup/runtime
@@ -237,27 +234,6 @@ if (app.Environment.IsDevelopment())
     // Enable Swagger UI in development
     app.UseSwagger();
     app.UseSwaggerUI();
-    // Automatically open Swagger UI in the default browser when the app starts
-    try
-    {
-        app.Lifetime.ApplicationStarted.Register(() =>
-        {
-            try
-            {
-                var server = app.Services.GetService<IServer>();
-                var addressesFeature = server?.Features.Get<IServerAddressesFeature>();
-                var address = addressesFeature?.Addresses?.FirstOrDefault() ?? app.Urls.FirstOrDefault() ?? "http://localhost:5075";
-                var swaggerUrl = address.TrimEnd('/') + "/swagger/index.html";
-                Process.Start(new ProcessStartInfo { FileName = swaggerUrl, UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                var logger = app.Services.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger("Startup");
-                logger?.LogWarning(ex, "Failed to open Swagger UI automatically.");
-            }
-        });
-    }
-    catch { }
 }
 else
 {

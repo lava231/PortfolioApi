@@ -33,7 +33,7 @@ packages/
 
 ### Dotnet user secrets (do not commit secrets file) ###
 secrets.json
-
+*.secrets.json
 ### Environment files (may contain secrets) ###
 .env
 .env.*
