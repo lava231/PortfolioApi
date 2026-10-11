@@ -9,7 +9,7 @@ namespace PortfolioApi.Controllers
 {
     [ApiController]
     [Route("api/admin/[controller]")]
-    [Authorize]
+    [Authorize(Policy = "SuperAdminOnly")]
     public class UploadController : ControllerBase
     {
         private readonly IFileStorage _storage;
@@ -36,7 +36,7 @@ namespace PortfolioApi.Controllers
             {
                 return BadRequest(new { error = ex.Message });
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 return StatusCode(500, new { error = "Upload failed" });
             }

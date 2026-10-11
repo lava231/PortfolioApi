@@ -34,22 +34,31 @@ namespace PortfolioApi.Services
             if (file.Length == 0) throw new ArgumentException("Empty file");
             if (file.Length > _maxFileSizeBytes) throw new ArgumentException("File too large");
 
-            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            var originalFileName = Path.GetFileName(file.FileName);
+            var ext = Path.GetExtension(originalFileName).ToLowerInvariant();
             if (!_allowedExt.Contains(ext)) throw new ArgumentException("Only image files are allowed");
+
+            // Prevent path traversal in original filename by using only the file name
+            // and not including any provided path segments in OriginalName return value.
+            var safeOriginalName = originalFileName;
 
             var unique = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + "-" + Guid.NewGuid().ToString("N");
             var filename = "image-" + unique + ext;
             var path = Path.Combine(_uploadDir, filename);
 
-            await using (var fs = new FileStream(path, FileMode.CreateNew))
+            // Write to temp file then move to avoid partial files
+            var tempPath = path + ".tmp";
+            await using (var fs = new FileStream(tempPath, FileMode.CreateNew))
             {
                 await file.CopyToAsync(fs);
+                await fs.FlushAsync();
             }
+            System.IO.File.Move(tempPath, path);
 
             return new FileUploadResultDto
             {
                 FileName = filename,
-                OriginalName = file.FileName,
+                OriginalName = safeOriginalName,
                 Size = file.Length,
                 Url = $"/uploads/{filename}"
             };
@@ -58,7 +67,10 @@ namespace PortfolioApi.Services
         public Task<bool> DeleteFileAsync(string filename)
         {
             if (string.IsNullOrEmpty(filename)) return Task.FromResult(false);
-            var path = Path.Combine(_uploadDir, filename);
+            // Prevent path traversal by only allowing simple file names
+            var name = Path.GetFileName(filename);
+            if (string.IsNullOrEmpty(name)) return Task.FromResult(false);
+            var path = Path.Combine(_uploadDir, name);
             if (!File.Exists(path)) return Task.FromResult(false);
             File.Delete(path);
             return Task.FromResult(true);

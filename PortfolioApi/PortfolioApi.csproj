@@ -11,11 +11,16 @@
   <ItemGroup>
     <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.1" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.11" />
-    <PackageReference Include="Scalar.AspNetCore" Version="2.17.14" />
+    
+      <!-- Azure.Core experiment removed: it was added to attempt to satisfy transitive test-time dependencies
+           but used PrivateAssets/ExcludeAssets which can produce inconsistent dependency graphs. Remove it
+           to let test project and restore resolve transitive packages from the test project directly. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.11" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
       <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+    <PackageReference Include="Azure.Identity" Version="1.11.4" />
+    <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.4.0" />
   </ItemGroup>
 
 </Project>

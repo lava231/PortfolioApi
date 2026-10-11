@@ -10,5 +10,7 @@ namespace PortfolioApi.Models.Dtos
         public string Email { get; set; } = string.Empty;
         public string Role { get; set; } = string.Empty;
         public DateTime? LastLogin { get; set; }
+        // Optional: clients may read ExpiresAt if compatible
+        public DateTime? ExpiresAt { get; set; }
     }
 }

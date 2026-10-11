@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using PortfolioApi.Models.Dtos;
 using PortfolioApi.Models.Entities;
 using PortfolioApi.Repositories;
@@ -19,17 +20,24 @@ namespace PortfolioApi.Controllers
         }
 
         [HttpPost]
+        [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("ContactPolicy")]
         public async Task<IActionResult> Create([FromBody] ContactCreateDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            // Apply server-side limits to field lengths (defensive)
+            if (dto.Name.Length > 50 || dto.Message.Length > 1000) return BadRequest(new { message = "Payload too large" });
+
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+            var ua = Request.Headers.ContainsKey("User-Agent") ? Request.Headers["User-Agent"].ToString() : null;
 
             var contact = new Contact
             {
                 Name = dto.Name,
                 Email = dto.Email,
                 Message = dto.Message,
-                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
-                UserAgent = Request.Headers["User-Agent"].ToString()
+                IpAddress = ip,
+                UserAgent = ua
             };
 
             var created = await _repo.AddAsync(contact);
@@ -42,25 +50,31 @@ namespace PortfolioApi.Controllers
             });
         }
         [HttpGet]
-        [Microsoft.AspNetCore.Authorization.Authorize(Policy = "SuperAdminOnly")]
+        [Authorize(Policy = "SuperAdminOnly")]
         public async Task<IActionResult> GetAll([FromQuery] int page = 1, [FromQuery] int limit = 10, [FromQuery] string? status = null)
         {
+            if (page < 1) return BadRequest(new { message = "page must be >= 1" });
+            if (limit < 1 || limit > 100) return BadRequest(new { message = "limit must be between 1 and 100" });
+
             var (items, total) = await _repo.GetPagedAsync(page, limit, status);
+            items = items ?? System.Linq.Enumerable.Empty<Models.Entities.Contact>();
+
+            var pages = (total + limit - 1) / limit; // integer-safe ceiling
 
             return Ok(new {
-                data = items,
+                data = items.Select(c => new { id = c.Id, name = c.Name, email = c.Email, message = c.Message, status = c.Status, createdAt = c.CreatedAt }),
                 pagination = new {
                     current = page,
-                    pages = (int)Math.Ceiling((double)total / limit),
+                    pages = pages,
                     total,
-                    hasNext = page * limit < total,
+                    hasNext = page < pages,
                     hasPrev = page > 1
                 }
             });
         }
 
         [HttpGet("{id:guid}")]
-        [Microsoft.AspNetCore.Authorization.Authorize(Policy = "SuperAdminOnly")]
+        [Authorize(Policy = "SuperAdminOnly")]
         public async Task<IActionResult> GetById(Guid id)
         {
             var contact = await _repo.GetByIdAsync(id);
@@ -69,22 +83,27 @@ namespace PortfolioApi.Controllers
         }
 
         [HttpPut("{id:guid}")]
-        [Microsoft.AspNetCore.Authorization.Authorize(Policy = "SuperAdminOnly")]
-        public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] dynamic body)
+        [Authorize(Policy = "SuperAdminOnly")]
+        public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] Models.Dtos.ContactStatusUpdateDto body)
         {
-            string? status = body?.status;
-            if (string.IsNullOrEmpty(status)) return BadRequest(new { message = "Status is required" });
+            if (body == null || string.IsNullOrEmpty(body.Status)) return BadRequest(new { message = "Status is required" });
+
+            var status = body.Status.Trim().ToLowerInvariant();
+            if (status != Models.Entities.ContactStatus.Unread && status != Models.Entities.ContactStatus.Read && status != Models.Entities.ContactStatus.Replied)
+                return BadRequest(new { message = "Unsupported status" });
 
             var contact = await _repo.GetByIdAsync(id);
             if (contact == null) return NotFound(new { message = "Contact submission not found" });
 
             contact.Status = status;
             var updated = await _repo.UpdateAsync(contact);
-            return Ok(new { data = updated });
+            if (updated == null) return NotFound(new { message = "Contact submission not found" });
+
+            return Ok(new { data = new { id = updated.Id, status = updated.Status, updatedAt = updated.UpdatedAt } });
         }
 
         [HttpDelete("{id:guid}")]
-        [Microsoft.AspNetCore.Authorization.Authorize(Policy = "SuperAdminOnly")]
+        [Authorize(Policy = "SuperAdminOnly")]
         public async Task<IActionResult> Delete(Guid id)
         {
             var ok = await _repo.DeleteAsync(id);
@@ -93,7 +112,7 @@ namespace PortfolioApi.Controllers
         }
 
         [HttpGet("stats")]
-        [Microsoft.AspNetCore.Authorization.Authorize(Policy = "SuperAdminOnly")]
+        [Authorize(Policy = "SuperAdminOnly")]
         public async Task<IActionResult> Stats()
         {
             var stats = await _repo.GetStatsOverviewAsync();

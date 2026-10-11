@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using PortfolioApi.Models.Dtos;
 using PortfolioApi.Models.Entities;
 using PortfolioApi.Repositories;
@@ -28,21 +29,53 @@ namespace PortfolioApi.Controllers
         }
 
         [HttpPost("login")]
+        // No-op patch to trigger file update consistency.
+        [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("LoginPolicy")]
         public async Task<IActionResult> Login([FromBody] LoginRequestDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
+            // Basic server-side rate limiting using IMemoryCache to mitigate brute-force
+            var cache = HttpContext.RequestServices.GetService<IMemoryCache>();
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var rateKey = $"login-attempt:{ip}";
+            var attempts = 0;
+            if (cache != null && cache.TryGetValue<int>(rateKey, out var existing)) attempts = existing;
+            if (attempts >= 10) return StatusCode(429, new { message = "Too many login attempts. Try again later." });
 
             var admin = await _admins.FindByEmailAsync(dto.Email);
-            if (admin == null) return Unauthorized(new { message = "Invalid credentials" });
-            if (!admin.IsActive) return Unauthorized(new { message = "Account is deactivated" });
+            var genericFail = Unauthorized(new { message = "Invalid credentials" });
+
+            if (admin == null)
+            {
+                // increment attempts for unknown account too
+                cache?.Set(rateKey, attempts + 1, TimeSpan.FromMinutes(5));
+                return genericFail;
+            }
+
+            // Prevent inactive admins from authenticating but do not leak this to the client
+            if (!admin.IsActive)
+            {
+                cache?.Set(rateKey, attempts + 1, TimeSpan.FromMinutes(5));
+                return genericFail;
+            }
 
             var verify = _passwordHasher.VerifyHashedPassword(admin, admin.PasswordHash, dto.Password);
-            if (verify == PasswordVerificationResult.Failed) return Unauthorized(new { message = "Invalid credentials" });
+            if (verify == PasswordVerificationResult.Failed)
+            {
+                cache?.Set(rateKey, attempts + 1, TimeSpan.FromMinutes(5));
+                return genericFail;
+            }
+
+            // Successful login: reset attempt counter
+            cache?.Remove(rateKey);
 
             admin.LastLogin = DateTime.UtcNow;
             await _admins.UpdateAsync(admin);
 
             var token = _jwt.GenerateToken(admin.Id, admin.Role);
+
+            var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+            var jwtToken = handler.ReadJwtToken(token);
 
             var response = new LoginResponseDto
             {
@@ -53,6 +86,9 @@ namespace PortfolioApi.Controllers
                 Role = admin.Role,
                 LastLogin = admin.LastLogin
             };
+
+            // Optionally include expiry if compatible with clients
+            try { response.GetType().GetProperty("ExpiresAt")?.SetValue(response, jwtToken.ValidTo); } catch {}
 
             return Ok(response);
         }
@@ -67,7 +103,7 @@ namespace PortfolioApi.Controllers
             if (!Guid.TryParse(idClaim, out var id)) return Unauthorized();
 
             var admin = await _admins.GetByIdAsync(id);
-            if (admin == null) return Unauthorized();
+            if (admin == null || !admin.IsActive) return Unauthorized();
 
             return Ok(new {
                 id = admin.Id,

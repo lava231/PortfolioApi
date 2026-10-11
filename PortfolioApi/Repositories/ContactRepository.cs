@@ -32,8 +32,16 @@ namespace PortfolioApi.Repositories
             if (!string.IsNullOrEmpty(status)) query = query.Where(c => c.Status == status);
 
             var total = await query.CountAsync();
+            // Prevent overflow in Skip calculation
+            var skip = (long)(page - 1) * limit;
+            if (skip > int.MaxValue)
+            {
+                // Skip too large -> return empty page
+                return (Enumerable.Empty<Contact>(), total);
+            }
+
             var items = await query.OrderByDescending(c => c.CreatedAt)
-                                   .Skip((page - 1) * limit)
+                                   .Skip((int)skip)
                                    .Take(limit)
                                    .ToListAsync();
 
@@ -64,6 +72,7 @@ namespace PortfolioApi.Repositories
 
         public async Task<(int total,int unread,int read,int replied,int recent)> GetStatsOverviewAsync()
         {
+            // Use a single query where possible to reduce round-trips
             var total = await _db.Contacts.CountAsync();
             var unread = await _db.Contacts.CountAsync(c => c.Status == ContactStatus.Unread);
             var read = await _db.Contacts.CountAsync(c => c.Status == ContactStatus.Read);

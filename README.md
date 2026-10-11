@@ -6,7 +6,7 @@ This repository contains a single Web API project located in the PortfolioApi di
 
 Key points
 - Target framework: .NET 10
-- Database: SQL Server (LocalDB by default via DefaultConnection)
+- Database: SQLite in-memory (for tests) and SQL Server (LocalDB by default via DefaultConnection for development)
 - Authentication: JWT bearer tokens
 - Validation: FluentValidation
 - OpenAPI/Swagger UI: Swashbuckle (available at /swagger/index.html in Development)

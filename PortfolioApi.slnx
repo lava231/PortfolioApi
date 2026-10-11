@@ -1,6 +1,9 @@
 <Solution>
   <Folder Name="/docs/">
-    <File Path="C:/Users/lavamardeen/Downloads/portfolioapi_endpoints.md" />
+    
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PortfolioApi.Tests/PortfolioApi.Tests.csproj" />
   </Folder>
   <Project Path="PortfolioApi/PortfolioApi.csproj" />
 </Solution>
