@@ -22,8 +22,15 @@ namespace PortfolioApi.Services
         {
             _env = env;
             _config = config;
-            _uploadDir = config["Uploads:Directory"] ?? Path.Combine(_env.ContentRootPath, "uploads");
-            if (!Directory.Exists(_uploadDir)) Directory.CreateDirectory(_uploadDir);
+            var configuredUploadDir = config["Uploads:Directory"];
+
+            _uploadDir = string.IsNullOrWhiteSpace(configuredUploadDir)
+                ? Path.Combine(_env.ContentRootPath, "uploads")
+                : Path.IsPathRooted(configuredUploadDir)
+                    ? configuredUploadDir
+                    : Path.GetFullPath(configuredUploadDir, _env.ContentRootPath);
+
+                        Directory.CreateDirectory(_uploadDir);
             _maxFileSizeBytes = long.TryParse(config["Uploads:MaxFileSizeBytes"], out var v) ? v : 5 * 1024 * 1024;
         }
 

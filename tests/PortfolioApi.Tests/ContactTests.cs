@@ -10,6 +10,11 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Xunit;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Hosting;
+using System.Net;
 
 namespace PortfolioApi.Tests
 {
@@ -228,6 +233,96 @@ namespace PortfolioApi.Tests
         }
 
         [Fact]
+        public async Task Contact_Create_Rate_Limit_Is_Isolated_Per_Client_IP()
+        {
+            var mockRepo = new Mock<IContactRepository>();
+
+            mockRepo
+                .Setup(r => r.AddAsync(It.IsAny<Contact>()))
+                .ReturnsAsync((Contact contact) =>
+                {
+                    contact.Id = Guid.NewGuid();
+                    contact.CreatedAt = DateTime.UtcNow;
+                    return contact;
+                });
+
+            Environment.SetEnvironmentVariable("Jwt:Key", new string('a', 40));
+            Environment.SetEnvironmentVariable("Jwt:Issuer", "test");
+            Environment.SetEnvironmentVariable("Jwt:Audience", "test");
+
+            using var client = _factory
+                .WithWebHostBuilder(builder =>
+                {
+                    builder.ConfigureServices(services =>
+                    {
+                        services.AddSingleton<IContactRepository>(
+                            mockRepo.Object);
+
+                        services.AddTransient<IStartupFilter,
+                            TestClientIpStartupFilter>();
+                    });
+                })
+                .CreateClient(new WebApplicationFactoryClientOptions
+                {
+                    AllowAutoRedirect = false
+                });
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                name = "Alex",
+                email = "alex@example.com",
+                message = "This is a valid contact message."
+            });
+
+            async Task<HttpResponseMessage> SubmitContactAsync(string ipAddress)
+            {
+                var request = new HttpRequestMessage(
+                    HttpMethod.Post,
+                    "/api/contact");
+
+                request.Headers.Add("X-Test-Client-IP", ipAddress);
+
+                request.Content = new StringContent(
+                    payload,
+                    System.Text.Encoding.UTF8,
+                    "application/json");
+
+                return await client.SendAsync(request);
+            }
+
+            // Client A consumes its five allowed submissions.
+            for (var i = 0; i < 5; i++)
+            {
+                using var response =
+                    await SubmitContactAsync("192.0.2.10");
+
+                Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            }
+
+            // Client A has exhausted its quota.
+            using (var response =
+                await SubmitContactAsync("192.0.2.10"))
+            {
+                Assert.Equal(
+                    (HttpStatusCode)429,
+                    response.StatusCode);
+            }
+
+            // Client B has an independent quota.
+            using (var response =
+                await SubmitContactAsync("192.0.2.20"))
+            {
+                Assert.Equal(
+                    HttpStatusCode.Created,
+                    response.StatusCode);
+            }
+
+            mockRepo.Verify(
+                r => r.AddAsync(It.IsAny<Contact>()),
+                Times.Exactly(6));
+        }
+
+        [Fact]
         public async Task Import_Rejects_Invalid_Status_And_Does_Not_Call_Repo()
         {
             var mockRepo = new Mock<IContactRepository>();
@@ -249,6 +344,32 @@ namespace PortfolioApi.Tests
             var res = await client.PostAsync("/api/admin/import", new StringContent(importPayload, System.Text.Encoding.UTF8, "application/json"));
             Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
             mockRepo.Verify(r => r.ReplaceContactsAsync(It.IsAny<System.Collections.Generic.IEnumerable<Contact>>()), Times.Never);
+        }
+    }
+    public class TestClientIpStartupFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(
+            Action<IApplicationBuilder> next)
+        {
+            return app =>
+            {
+                app.Use(async (context, nextMiddleware) =>
+                {
+                    if (context.Request.Headers.TryGetValue(
+                            "X-Test-Client-IP",
+                            out var headerValue)
+                        && IPAddress.TryParse(
+                            headerValue.ToString(),
+                            out var ipAddress))
+                    {
+                        context.Connection.RemoteIpAddress = ipAddress;
+                    }
+
+                    await nextMiddleware();
+                });
+
+                next(app);
+            };
         }
     }
 }

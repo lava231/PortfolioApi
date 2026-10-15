@@ -20,7 +20,8 @@ namespace PortfolioApi.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> Upload([FromForm] IFormFile image)
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> Upload(IFormFile image)
         {
             try
             {

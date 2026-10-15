@@ -72,6 +72,8 @@ appsettings.Development.json
 /backups/
 *.backup.json
 
+### Uploads ####
+PortfolioApi/uploads/
 # Do NOT ignore source code, migrations, project files, solution files, documentation, or other files required to build and run the application.
 
 # NOTE: If sensitive files are already tracked in the repository (for example, appsettings.Development.json or a secrets file), adding them to .gitignore will not remove them from the Git history or stop them from being tracked. To stop tracking a currently tracked file, you must remove it from the index (for example: `git rm --cached <file>`) and commit the change. Be careful — consult your team before removing tracked files.

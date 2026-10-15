@@ -2,35 +2,58 @@ using Azure.Identity;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using System.Security.Cryptography;
 using System.Threading.RateLimiting;
-// Configure Swagger/OpenAPI using Swashbuckle
+using Microsoft.OpenApi;
 
+// Configure Swagger/OpenAPI using Swashbuckle
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Enter your JWT access token."
+    });
+
+    options.AddSecurityRequirement(document =>
+        new OpenApiSecurityRequirement
+        {
+            [new OpenApiSecuritySchemeReference("Bearer", document)] = []
+        });
+});
+
 // In-memory cache for lightweight rate-limiting in Login
 // Rate limiting (named policies)
-builder.Services.AddRateLimiter(options =>
-{
+builder.Services.AddRateLimiter(options =>{
     // Partition by remote IP address for single-host deployments. Do NOT trust forwarded headers here.
-    options.AddPolicy("LoginPolicy", context => RateLimitPartition.GetFixedWindowLimiter<string>(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions
-    {
-        PermitLimit = 10,
-        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-        QueueLimit = 0,
-        Window = TimeSpan.FromMinutes(5)
-    }));
+    options.AddPolicy("LoginPolicy", context =>
+        RateLimitPartition.GetFixedWindowLimiter<string>(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ =>
+            new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0,
+                Window = TimeSpan.FromMinutes(5)
+            }));
 
     // Contact submission policy: stricter limits for public submissions
-    options.AddPolicy("ContactPolicy", _ => RateLimitPartition.GetFixedWindowLimiter<string>("contact-key", _ => new FixedWindowRateLimiterOptions
-    {
-        PermitLimit = 5,
-        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-        QueueLimit = 0,
-        Window = TimeSpan.FromMinutes(10)
-    }));
+    options.AddPolicy("ContactPolicy", context =>
+        RateLimitPartition.GetFixedWindowLimiter<string>(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ =>
+                new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0,
+                Window = TimeSpan.FromMinutes(10)
+            }));
 
     options.OnRejected = (context, token) =>
     {
@@ -38,6 +61,7 @@ builder.Services.AddRateLimiter(options =>
         return new ValueTask();
     };
 });
+
 // Configure API behavior
 builder.Services.Configure<Microsoft.AspNetCore.Mvc.ApiBehaviorOptions>(options => { options.SuppressModelStateInvalidFilter = false; });
 
@@ -206,6 +230,18 @@ builder.Services.AddValidatorsFromAssemblyContaining<PortfolioApi.Validators.Pro
 
 var app = builder.Build();
 
+var configuredUploadDir = builder.Configuration["Uploads:Directory"];
+
+var uploadDirectory = string.IsNullOrWhiteSpace(configuredUploadDir)
+    ? Path.Combine(app.Environment.ContentRootPath, "uploads")
+    : Path.IsPathRooted(configuredUploadDir)
+        ? configuredUploadDir
+        : Path.GetFullPath(
+            configuredUploadDir,
+            app.Environment.ContentRootPath);
+
+Directory.CreateDirectory(uploadDirectory);
+
 // Routing must select the endpoint before endpoint-specific rate-limit policies are evaluated.
 app.UseRouting();
 app.UseRateLimiter();
@@ -244,7 +280,11 @@ else
 }
 
 app.UseHttpsRedirection();
-
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(uploadDirectory),
+    RequestPath = "/uploads"
+});
 app.UseAuthentication();
 app.UseMiddleware<PortfolioApi.Middleware.ApiExceptionMiddleware>();
 app.UseAuthorization();
